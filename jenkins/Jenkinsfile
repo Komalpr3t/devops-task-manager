@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-credentials'
+        DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-creds'
         DOCKER_IMAGE = 'komalpreet1703/task-manager'
         DOCKER_TAG = "build-${env.BUILD_NUMBER}"
         SSH_KEY_CREDENTIALS_ID = 'aws-ssh-key'
