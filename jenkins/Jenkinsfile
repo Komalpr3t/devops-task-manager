@@ -6,6 +6,7 @@ pipeline {
         DOCKER_IMAGE = 'komalpreet1703/task-manager'
         DOCKER_TAG = "build-${env.BUILD_NUMBER}"
         SSH_KEY_CREDENTIALS_ID = 'aws-ssh-key'
+        AWS_CREDS_ID = 'aws-creds'
         EC2_IP = '' // Populated dynamically
     }
 
@@ -19,13 +20,15 @@ pipeline {
         stage('Infrastructure Provisioning (Terraform Apply)') {
             steps {
                 dir('terraform') {
-                    bat 'terraform init'
-                    bat 'terraform apply -auto-approve'
-                    script {
-                        // Extract IP without quotes or newlines. 
-                        // @ is used so Windows bat doesn't echo the command itself in the returnStdout.
-                        env.EC2_IP = bat(script: '@terraform output -raw instance_public_ip', returnStdout: true).trim()
-                        echo "EC2 Instance created with IP: ${env.EC2_IP}"
+                    withCredentials([aws(credentialsId: AWS_CREDS_ID, accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                        bat 'terraform init'
+                        bat 'terraform apply -auto-approve'
+                        script {
+                            // Extract IP without quotes or newlines. 
+                            // @ is used so Windows bat doesn't echo the command itself in the returnStdout.
+                            env.EC2_IP = bat(script: '@terraform output -raw instance_public_ip', returnStdout: true).trim()
+                            echo "EC2 Instance created with IP: ${env.EC2_IP}"
+                        }
                     }
                 }
             }
@@ -79,7 +82,9 @@ pipeline {
             steps {
                 input message: 'Are you sure you want to destroy the AWS Infrastructure? This will delete the EC2 instance.', ok: 'Yes, Destroy'
                 dir('terraform') {
-                    bat 'terraform destroy -auto-approve'
+                    withCredentials([aws(credentialsId: AWS_CREDS_ID, accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                        bat 'terraform destroy -auto-approve'
+                    }
                 }
             }
         }
