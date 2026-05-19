@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+README.md
+terraform
+k8s
+jenkins
+monitoring

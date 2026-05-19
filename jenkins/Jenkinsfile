@@ -1,0 +1,91 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-credentials'
+        DOCKER_IMAGE = 'komalpreet1703/task-manager'
+        DOCKER_TAG = "build-${env.BUILD_NUMBER}"
+        SSH_KEY_CREDENTIALS_ID = 'aws-ssh-key'
+        EC2_IP = '' // Populated dynamically
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Infrastructure Provisioning (Terraform Apply)') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform init'
+                    sh 'terraform apply -auto-approve'
+                    script {
+                        // Extract IP without quotes or newlines
+                        env.EC2_IP = sh(script: 'terraform output -raw instance_public_ip', returnStdout: true).trim()
+                        echo "EC2 Instance created with IP: ${env.EC2_IP}"
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir('docker') {
+                    sh 'docker build -f Dockerfile -t ${DOCKER_IMAGE}:${DOCKER_TAG} ..'
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: DOCKER_HUB_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                    sh 'docker push ${DOCKER_IMAGE}:${DOCKER_TAG}'
+                    sh 'docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest'
+                    sh 'docker push ${DOCKER_IMAGE}:latest'
+                }
+            }
+        }
+
+        stage('Deploy Application (Remote SSH)') {
+            steps {
+                echo "Waiting 3 minutes for k3s cluster to initialize on EC2..."
+                sleep time: 180, unit: 'SECONDS'
+                
+                // Ensure k8s deployment uses the exact Docker tag just built
+                sh 'sed -i "s|image: komalpreet1703/task-manager:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml'
+
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_KEY_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                    script {
+                        // Disable strict host key checking to prevent interactive yes/no prompts during pipeline
+                        def sshOpts = "-o StrictHostKeyChecking=no -i ${SSH_KEY}"
+                        
+                        // Securely copy the configuration folders to the EC2 server
+                        sh "scp ${sshOpts} -r k8s/ monitoring/ ubuntu@${EC2_IP}:/home/ubuntu/"
+                        
+                        // Execute kubectl commands remotely over SSH
+                        sh "ssh ${sshOpts} ubuntu@${EC2_IP} 'kubectl apply -f /home/ubuntu/k8s/'"
+                        sh "ssh ${sshOpts} ubuntu@${EC2_IP} 'kubectl apply -f /home/ubuntu/monitoring/'"
+                    }
+                }
+            }
+        }
+
+        stage('Infrastructure Teardown (Terraform Destroy)') {
+            steps {
+                input message: 'Are you sure you want to destroy the AWS Infrastructure? This will delete the EC2 instance.', ok: 'Yes, Destroy'
+                dir('terraform') {
+                    sh 'terraform destroy -auto-approve'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
