@@ -19,6 +19,7 @@ pipeline {
 
         stage('Infrastructure Provisioning (Terraform Apply)') {
             steps {
+
                 dir('terraform') {
 
                     withCredentials([
@@ -30,6 +31,7 @@ pipeline {
                     ]) {
 
                         bat 'terraform init'
+
                         bat 'terraform apply -auto-approve'
                     }
                 }
@@ -38,10 +40,10 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
+
                 dir('docker') {
 
                     bat "docker build -f Dockerfile -t ${DOCKER_IMAGE}:${DOCKER_TAG} .."
-
                 }
             }
         }
@@ -75,7 +77,7 @@ pipeline {
 
                 sleep time: 180, unit: 'SECONDS'
 
-                // Replace image tag dynamically
+                // Update deployment image dynamically
                 bat """
                     powershell -Command "(Get-Content k8s/deployment.yaml) -replace 'image: komalpreet1703/task-manager:latest', 'image: ${DOCKER_IMAGE}:${DOCKER_TAG}' | Set-Content k8s/deployment.yaml"
                 """
@@ -95,7 +97,6 @@ pipeline {
 
                     echo "Deploying to EC2 IP: ${EC2_IP}"
 
-                    // Inject SSH key directly
                     withCredentials([
                         sshUserPrivateKey(
                             credentialsId: SSH_KEY_CREDENTIALS_ID,
@@ -105,12 +106,18 @@ pipeline {
 
                         def sshOpts = '-o StrictHostKeyChecking=no'
 
-                        // Copy files
+                        // Fix Windows OpenSSH permissions
+                        bat """
+                            icacls "%SSH_KEY%" /inheritance:r
+                            icacls "%SSH_KEY%" /grant:r "%USERNAME%:R"
+                        """
+
+                        // Copy manifests to EC2
                         bat """
                             scp -i "%SSH_KEY%" ${sshOpts} -r k8s monitoring ubuntu@${EC2_IP}:/home/ubuntu/
                         """
 
-                        // Deploy Kubernetes manifests
+                        // Deploy Kubernetes app
                         bat """
                             ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl apply -f /home/ubuntu/k8s/"
                         """
