@@ -54,17 +54,17 @@ pipeline {
                 // Use powershell to replace the image string since 'sed' is not natively available in Windows
                 bat "powershell -Command \"(Get-Content k8s/deployment.yaml) -replace 'image: komalpreet1703/task-manager:latest', 'image: ${DOCKER_IMAGE}:${DOCKER_TAG}' | Set-Content k8s/deployment.yaml\""
 
-                withCredentials([sshUserPrivateKey(credentialsId: SSH_KEY_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-                    script {
-                        // Fetch the EC2 IP directly from Terraform outputs right before deployment
-                        def EC2_IP = ""
-                        dir('terraform') {
-                            EC2_IP = bat(script: '@terraform output -raw instance_public_ip', returnStdout: true).trim()
-                        }
-                        
+                script {
+                    // Fetch the EC2 IP directly from Terraform outputs right before deployment
+                    def EC2_IP = ""
+                    dir('terraform') {
+                        EC2_IP = bat(script: '@terraform output -raw instance_public_ip', returnStdout: true).trim()
+                    }
+                    
+                    // Use sshagent plugin to securely inject keys into memory rather than temporary files
+                    sshagent(credentials: [SSH_KEY_CREDENTIALS_ID]) {
                         // Disable strict host key checking to prevent interactive yes/no prompts during pipeline
-                        // Wrap SSH_KEY in quotes because Windows paths might contain spaces
-                        def sshOpts = "-o StrictHostKeyChecking=no -i \"${SSH_KEY}\""
+                        def sshOpts = "-o StrictHostKeyChecking=no"
                         
                         // Securely copy the configuration folders to the EC2 server
                         bat "scp ${sshOpts} -r k8s monitoring ubuntu@${EC2_IP}:/home/ubuntu/"
