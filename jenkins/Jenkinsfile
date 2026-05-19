@@ -7,7 +7,6 @@ pipeline {
         DOCKER_TAG = "build-${env.BUILD_NUMBER}"
         SSH_KEY_CREDENTIALS_ID = 'aws-ssh-key'
         AWS_CREDS_ID = 'aws-creds'
-        EC2_IP = '' // Populated dynamically
     }
 
     stages {
@@ -23,12 +22,6 @@ pipeline {
                     withCredentials([aws(credentialsId: AWS_CREDS_ID, accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY')]) {
                         bat 'terraform init'
                         bat 'terraform apply -auto-approve'
-                        script {
-                            // Extract IP without quotes or newlines. 
-                            // @ is used so Windows bat doesn't echo the command itself in the returnStdout.
-                            env.EC2_IP = bat(script: '@terraform output -raw instance_public_ip', returnStdout: true).trim()
-                            echo "EC2 Instance created with IP: ${env.EC2_IP}"
-                        }
                     }
                 }
             }
@@ -63,6 +56,12 @@ pipeline {
 
                 withCredentials([sshUserPrivateKey(credentialsId: SSH_KEY_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
                     script {
+                        // Fetch the EC2 IP directly from Terraform outputs right before deployment
+                        def EC2_IP = ""
+                        dir('terraform') {
+                            EC2_IP = bat(script: '@terraform output -raw instance_public_ip', returnStdout: true).trim()
+                        }
+                        
                         // Disable strict host key checking to prevent interactive yes/no prompts during pipeline
                         // Wrap SSH_KEY in quotes because Windows paths might contain spaces
                         def sshOpts = "-o StrictHostKeyChecking=no -i \"${SSH_KEY}\""
