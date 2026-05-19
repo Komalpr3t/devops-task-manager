@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: task-manager
-        image: komalpreet1703/task-manager:latest # Replaced by Jenkins
+        image: komalpreet1703/task-manager:latest 
         imagePullPolicy: Always
         ports:
         - containerPort: 80
