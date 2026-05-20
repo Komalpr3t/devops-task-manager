@@ -73,9 +73,9 @@ pipeline {
         stage('Deploy Application (Remote SSH)') {
             steps {
 
-                echo "Waiting 3 minutes for k3s cluster to initialize on EC2..."
+                echo "Waiting for EC2, Docker, and k3s initialization..."
 
-                sleep time: 180, unit: 'SECONDS'
+                sleep time: 600, unit: 'SECONDS'
 
                 // Update image tag dynamically
                 bat """
@@ -117,9 +117,13 @@ pipeline {
                             scp -i "%SSH_KEY%" ${sshOpts} -r k8s monitoring ubuntu@${EC2_IP}:/home/ubuntu/
                         """
 
-                        // Wait for Kubernetes nodes to be ready
+                        // Check cluster status
                         bat """
-                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl wait --for=condition=Ready nodes --all --timeout=300s"
+                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl get nodes"
+                        """
+
+                        bat """
+                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl get pods -A"
                         """
 
                         // Deploy app
@@ -130,6 +134,15 @@ pipeline {
                         // Deploy monitoring stack
                         bat """
                             ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl apply -f /home/ubuntu/monitoring/"
+                        """
+
+                        // Verify deployments
+                        bat """
+                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl get pods -A"
+                        """
+
+                        bat """
+                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl get svc -A"
                         """
                     }
                 }
