@@ -65,7 +65,7 @@ pipeline {
 
                     // Fetch the EC2 IP dynamically using AWS CLI
                     EC2_IP = bat(
-                        script: '@aws ec2 describe-instances --filters "Name=tag:Name,Values=Task-Manager-K3s-Node" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text',
+                        script: '@aws ec2 describe-instances --region us-east-1 --filters "Name=tag:Name,Values=Task-Manager-K3s-Node" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text',
                         returnStdout: true
                     ).trim()
 
