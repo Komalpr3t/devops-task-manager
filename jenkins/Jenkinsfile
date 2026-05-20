@@ -117,6 +117,11 @@ pipeline {
                             scp -i "%SSH_KEY%" ${sshOpts} -r k8s monitoring ubuntu@${EC2_IP}:/home/ubuntu/
                         """
 
+                        // Wait for Kubernetes nodes to be ready
+                        bat """
+                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl wait --for=condition=Ready nodes --all --timeout=300s"
+                        """
+
                         // Deploy app
                         bat """
                             ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl apply -f /home/ubuntu/k8s/"
