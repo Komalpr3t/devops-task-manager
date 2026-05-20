@@ -63,7 +63,7 @@ resource "aws_security_group" "k3s_sg" {
 # EC2 Instance
 resource "aws_instance" "k3s_node" {
   ami           = var.ami_id
-  instance_type = var.instance_type
+  instance_type = "t3.micro"
   key_name      = var.key_name
 
   vpc_security_group_ids = [aws_security_group.k3s_sg.id]
@@ -75,7 +75,6 @@ resource "aws_instance" "k3s_node" {
 
               # Update packages
               apt-get update -y
-              apt-get upgrade -y
 
               # Install Docker
               apt-get install -y apt-transport-https ca-certificates curl software-properties-common
