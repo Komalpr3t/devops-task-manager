@@ -6,7 +6,6 @@ pipeline {
         DOCKER_IMAGE = 'komalpreet1703/task-manager'
         DOCKER_TAG = "build-${env.BUILD_NUMBER}"
         SSH_KEY_CREDENTIALS_ID = 'aws-ssh-key'
-        AWS_CREDS_ID = 'aws-creds'
     }
 
     stages {
@@ -14,27 +13,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-            }
-        }
-
-        stage('Infrastructure Provisioning (Terraform Apply)') {
-            steps {
-
-                dir('terraform') {
-
-                    withCredentials([
-                        aws(
-                            credentialsId: AWS_CREDS_ID,
-                            accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                        )
-                    ]) {
-
-                        bat 'terraform init'
-
-                        bat 'terraform apply -auto-approve'
-                    }
-                }
             }
         }
 
@@ -73,9 +51,7 @@ pipeline {
         stage('Deploy Application (Remote SSH)') {
             steps {
 
-                echo "Waiting for EC2, Docker, and k3s initialization..."
-
-                sleep time: 600, unit: 'SECONDS'
+                echo "Starting Application Deployment to K3s..."
 
                 // Update image tag dynamically
                 bat """
@@ -87,13 +63,11 @@ pipeline {
                     // Fetch EC2 public IP
                     def EC2_IP = ""
 
-                    dir('terraform') {
-
-                        EC2_IP = bat(
-                            script: '@terraform output -raw instance_public_ip',
-                            returnStdout: true
-                        ).trim()
-                    }
+                    // Fetch the EC2 IP dynamically using AWS CLI
+                    EC2_IP = bat(
+                        script: '@aws ec2 describe-instances --filters "Name=tag:Name,Values=Task-Manager-K3s-Node" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text',
+                        returnStdout: true
+                    ).trim()
 
                     echo "Deploying to EC2 IP: ${EC2_IP}"
 
@@ -114,7 +88,7 @@ pipeline {
 
                         // Copy Kubernetes manifests
                         bat """
-                            scp -i "%SSH_KEY%" ${sshOpts} -r k8s monitoring ubuntu@${EC2_IP}:/home/ubuntu/
+                            scp -i "%SSH_KEY%" ${sshOpts} -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
                         """
 
                         // Check cluster status
@@ -131,11 +105,6 @@ pipeline {
                             ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl apply -f /home/ubuntu/k8s/"
                         """
 
-                        // Deploy monitoring stack
-                        bat """
-                            ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl apply -f /home/ubuntu/monitoring/"
-                        """
-
                         // Verify deployments
                         bat """
                             ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl get pods -A"
@@ -144,27 +113,6 @@ pipeline {
                         bat """
                             ssh -i "%SSH_KEY%" ${sshOpts} ubuntu@${EC2_IP} "kubectl get svc -A"
                         """
-                    }
-                }
-            }
-        }
-
-        stage('Infrastructure Teardown (Terraform Destroy)') {
-            steps {
-
-                input message: 'Are you sure you want to destroy the AWS Infrastructure? This will delete the EC2 instance.', ok: 'Yes, Destroy'
-
-                dir('terraform') {
-
-                    withCredentials([
-                        aws(
-                            credentialsId: AWS_CREDS_ID,
-                            accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                            secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                        )
-                    ]) {
-
-                        bat 'terraform destroy -auto-approve'
                     }
                 }
             }

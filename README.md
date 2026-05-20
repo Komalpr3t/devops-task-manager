@@ -39,16 +39,20 @@ The following tools and technologies form the core of this project. Each tool pl
 
 ## 3. Project Architecture
 
-The architecture follows a linear CI/CD pipeline where every stage is executed automatically. The flow begins with a developer's code change and ends with a fully monitored, Kubernetes-managed application running on AWS.
+The architecture is deliberately split into two distinct phases to ensure stability and efficiency: a **One-Time Manual Setup** for infrastructure, and an automated **Per-Push CI/CD Pipeline** for application updates.
 
-### Pipeline Flow
+### Phase 1: One-Time Manual Setup
+This phase is executed locally by the developer only once to bootstrap the environment.
+- **Step 1 — Terraform Provisioning:** The developer runs `terraform apply` locally. This creates the AWS EC2 instance, security groups, and automatically installs Docker and K3s on boot.
+- **Step 2 — Verify Infrastructure:** The developer SSHs into the EC2 instance to verify the Kubernetes node is `Ready`.
+- **Step 3 — Deploy Monitoring:** The developer manually applies the Prometheus and Grafana manifests to the cluster.
 
-- **Step 1 — Developer:** The developer writes code locally and pushes changes to the GitHub repository.
-- **Step 2 — Jenkins CI/CD:** Jenkins automatically detects changes or is triggered manually to execute the pipeline defined in the `Jenkinsfile`.
-- **Step 3 — Terraform Provisioning:** Jenkins executes Terraform scripts (`main.tf`) to provision a new AWS EC2 instance. Security groups, key pairs, and user-data scripts are executed to install Docker and K3s immediately on boot.
-- **Step 4 — Docker Containerization:** The pipeline builds the React application into a highly optimized Docker image using multi-stage builds and pushes it to Docker Hub.
-- **Step 5 — K3s Deployment:** Jenkins uses SSH to copy the Kubernetes manifests (`deployment.yaml`, `service.yaml`) to the EC2 instance and deploys the application and monitoring stack directly onto the K3s cluster.
-- **Step 6 — Monitoring Live:** Prometheus begins scraping metrics from the node and K3s pods. Grafana dashboards become available automatically for real-time traffic and health visualization.
+### Phase 2: Automated CI/CD Pipeline (Jenkins)
+This is the automated workflow triggered on every code push to GitHub.
+- **Step 1 — Trigger:** GitHub webhook notifies Jenkins of a new commit.
+- **Step 2 — Checkout & Build:** Jenkins checks out the code and builds a highly optimized Docker image of the React application.
+- **Step 3 — Push to Registry:** Jenkins pushes the new image to DockerHub.
+- **Step 4 — SSH & Deploy:** Jenkins dynamically fetches the running EC2 IP using the AWS CLI, connects via SSH, and applies the updated Kubernetes application manifests. The application updates live immediately without recreating infrastructure.
 
 ---
 
@@ -156,13 +160,11 @@ Terraform is used to define and provision AWS cloud infrastructure in a declarat
 - **Security Group** with exact inbound/outbound rules required for SSH, HTTP, and Kubernetes services.
 - **Automated Bootstrap** via `user_data` script to install Docker and K3s silently on first boot.
 
-### Terraform Workflow
+### Terraform Workflow (One-Time Manual Setup)
 ```bash
+cd terraform
 terraform init      # Download AWS providers and modules
-terraform validate  # Check configuration syntax
-terraform plan      # Preview infrastructure changes
-terraform apply     # Provision infrastructure on AWS
-terraform destroy   # Tear down all AWS resources securely
+terraform apply -auto-approve # Provision infrastructure on AWS
 ```
 
 ### Security Group Port Configuration
@@ -234,12 +236,9 @@ Jenkins serves as the automation backbone of this project. The pipeline is defin
 ### Pipeline Stages
 
 1. **Checkout:** Pull the latest source code from the GitHub repository.
-2. **Infrastructure Provisioning:** Jenkins navigates to the Terraform directory and automatically runs `terraform apply -auto-approve` to spin up the AWS EC2 instance.
-3. **Wait & Verify:** A sleep step ensures that the EC2 instance and K3s cluster have completely booted before proceeding.
-4. **Build Docker Image:** The React app is built into a Docker image using the provided multi-stage Dockerfile.
-5. **Push to Docker Hub:** The newly built container image is pushed to a public or private Docker registry.
-6. **Deploy Application to K3s:** Using SSH credentials securely injected by Jenkins, the pipeline applies Kubernetes manifests to deploy the application and monitoring stack.
-7. **Infrastructure Teardown:** A manual approval block pauses the pipeline. Upon approval, `terraform destroy` is executed to clean up all cloud resources and prevent unnecessary billing.
+2. **Build Docker Image:** The React app is built into a Docker image using the provided multi-stage Dockerfile.
+3. **Push to Docker Hub:** The newly built container image is pushed to a public or private Docker registry.
+4. **Deploy Application to K3s:** Using the AWS CLI, Jenkins fetches the IP of the existing EC2 instance. It then securely connects via SSH and applies the updated Kubernetes application manifests dynamically.
 
 ---
 
