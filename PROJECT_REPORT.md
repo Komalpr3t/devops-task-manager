@@ -7,8 +7,8 @@
 
 This report outlines the deployment architecture, configuration steps, and automated CI/CD pipeline for the **DevOps Task Manager** application. The project is designed to prioritize stability, resource efficiency, and simplicity:
 - **Phase 1 — One-Time Server Setup:** Terraform provisions the AWS EC2 instance (`t3.micro` default) with Docker and k3s automatically installed via `user_data` (optimized with `--disable traefik --disable servicelb` to conserve memory).
-- **Phase 2 — Automated CI/CD:** A lightweight, automated Jenkins pipeline running locally on the developer's Windows machine checks out the source code, builds the Docker image, pushes it to Docker Hub, and executes a remote deployment via SSH.
-- **Monitoring Architecture:** To operate stably within AWS free-tier limit constraints (1GB RAM on `t3.micro`), we adopt a **hybrid observability model**. Prometheus and Grafana run locally on the developer's machine using Docker Compose, scraping metrics remotely from lightweight exporters (`node_exporter` and `kube-state-metrics`) running on the EC2 host.
+- **Phase 2 — Automated CI/CD:** An automated Jenkins pipeline running locally on the developer's Windows machine checks out the source code, builds the Docker image, pushes it to Docker Hub, and executes a remote deployment via SSH.
+- **Monitoring Architecture:** To operate stably within AWS free-tier limit constraints (1GB RAM on `t3.micro`), we adopt a **hybrid observability model**. Prometheus and Grafana run locally on the developer's machine using Docker Compose. Local Prometheus runs on port `9091` and Grafana on port `3000`, scraping metrics remotely from lightweight exporters (`node_exporter` and `kube-state-metrics`) running on the EC2 host.
 
 By keeping the heavy build engine (Jenkins), query database (Prometheus), and visualization UI (Grafana) running locally, we keep the remote EC2 instance's memory footprint extremely low and guarantee high cluster stability.
 
@@ -20,7 +20,7 @@ By keeping the heavy build engine (Jenkins), query database (Prometheus), and vi
 Running container orchestration and monitoring stacks on limited cloud resources requires careful memory budgeting.
 - **Instance Type Selection:** `t3.micro` (2 vCPUs, 1GB RAM)
   - *Sizing Strategy:* To operate within AWS free-tier limit constraints, we deploy on a single `t3.micro` instance.
-  - *Optimization Strategy:* Running heavy Docker builds and Jenkins pipeline orchestration locally saves critical CPU and memory on the target server. Furthermore, the remote k3s cluster is optimized by disabling embedded controllers, and the database metrics storage is offloaded to the local machine, preserving the EC2 instance's RAM for the core task-manager application.
+  - *Optimization Strategy:* Running heavy Docker builds and Jenkins pipeline orchestration locally saves critical CPU and memory on the target server. Furthermore, the remote k3s cluster is optimized by disabling Traefik and ServiceLB, and the database metrics storage is offloaded to the local machine, preserving the EC2 instance's RAM for the core task-manager application.
 
 ### 2.2 Security Group Rules
 The security group is configured to allow administration, API access, application routing, and remote metric collection:
@@ -97,11 +97,10 @@ devops-task-manager/
 │   ├── outputs.tf
 │   └── terraform.tfvars
 ├── jenkins/              # Jenkinsfile pipeline definition
-├── monitoring/           # Local observability configurations
-│   ├── README.md
-│   ├── prometheus-local.yml
-│   └── docker-compose.yml
-└── deploy.sh             # Helper shell script for manual remote deployments
+└── monitoring/           # Local observability configurations
+    ├── README.md
+    ├── prometheus-local.yml
+    └── docker-compose.yml
 ```
 
 ### 3.2 Automated CI/CD Workflow
@@ -122,8 +121,8 @@ sequenceDiagram
     Jen->>Jen: Build Docker Image (Vite + React)
     Jen->>DH: Push Image with tag (komalpreet1703/task-manager:build-X)
     Jen->>Jen: Query EC2 IP dynamically via AWS CLI (PowerShell)
-    Jen->>EC2: SCP updated k8s/ manifests (scp)
-    Jen->>EC2: SSH: kubectl apply -f k8s/ (ssh)
+    Jen->>EC2: SCP updated k8s/ manifests using local PEM key
+    Jen->>EC2: SSH: kubectl apply -f k8s/ using local PEM key
     Note over EC2: Pulls new image from Docker Hub & updates Pods
     Jen->>EC2: SSH: kubectl rollout status deployment/task-manager
     Jen-->>Dev: Pipeline Success
@@ -158,6 +157,11 @@ pipeline {
         DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-creds'
         DOCKER_IMAGE = 'komalpreet1703/task-manager'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
+
+        PEM_FILE = 'C:\\jenkins-keys\\task-manager.pem'
+
+        GIT_SSH = 'C:\\Program Files\\Git\\usr\\bin\\ssh.exe'
+        GIT_SCP = 'C:\\Program Files\\Git\\usr\\bin\\scp.exe'
     }
 
     stages {
@@ -172,6 +176,7 @@ pipeline {
                 bat 'where aws'
                 bat 'where ssh'
                 bat 'where scp'
+                bat '"%GIT_SSH%" -V'
                 bat 'docker --version'
                 bat 'kubectl version --client'
             }
@@ -179,7 +184,12 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                bat "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} -t ${DOCKER_IMAGE}:latest -f docker/Dockerfile ."
+                bat """
+                docker build ^
+                -t ${DOCKER_IMAGE}:${IMAGE_TAG} ^
+                -t ${DOCKER_IMAGE}:latest ^
+                -f docker/Dockerfile .
+                """
             }
         }
 
@@ -192,9 +202,11 @@ pipeline {
                         passwordVariable: 'DOCKER_PASS'
                     )
                 ]) {
-                    bat "docker login -u %DOCKER_USER% -p %DOCKER_PASS%"
-                    bat "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
-                    bat "docker push ${DOCKER_IMAGE}:latest"
+                    bat """
+                    docker login -u %DOCKER_USER% -p %DOCKER_PASS%
+                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                    docker push ${DOCKER_IMAGE}:latest
+                    """
                 }
             }
         }
@@ -203,23 +215,32 @@ pipeline {
             steps {
                 script {
                     def EC2_IP = powershell(
-                        script: "aws ec2 describe-instances --region us-east-1 --filters 'Name=tag:Name,Values=Task-Manager-K3s-Node' 'Name=instance-state-name,Values=running' --query 'Reservations[*].Instances[*].PublicIpAddress' --output text",
+                        script: """
+                        aws ec2 describe-instances `
+                        --region us-east-1 `
+                        --filters "Name=tag:Name,Values=Task-Manager-K3s-Node" "Name=instance-state-name,Values=running" `
+                        --query "Reservations[*].Instances[*].PublicIpAddress" `
+                        --output text
+                        """,
                         returnStdout: true
                     ).trim()
 
                     echo "Deploying to EC2 IP: ${EC2_IP}"
 
-                    withCredentials([
-                        sshUserPrivateKey(
-                            credentialsId: 'aws-ssh-key',
-                            keyFileVariable: 'SSH_KEY'
-                        )
-                    ]) {
-                        bat "scp -i \"${SSH_KEY}\" -o StrictHostKeyChecking=no -r k8s ubuntu@${EC2_IP}:/home/ubuntu/"
-                        bat """
-                        ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${IMAGE_TAG}|g' /home/ubuntu/k8s/deployment.yaml && kubectl apply -f /home/ubuntu/k8s/ && kubectl rollout status deployment/task-manager"
-                        """
-                    }
+                    bat """
+                    "%GIT_SCP%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -i "${PEM_FILE}" ^
+                    -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
+                    """
+
+                    bat """
+                    "%GIT_SSH%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -i "${PEM_FILE}" ^
+                    ubuntu@${EC2_IP} ^
+                    "sudo kubectl apply -f /home/ubuntu/k8s/ && sudo kubectl rollout status deployment/task-manager"
+                    """
                 }
             }
         }
@@ -228,20 +249,23 @@ pipeline {
             steps {
                 script {
                     def EC2_IP = powershell(
-                        script: "aws ec2 describe-instances --region us-east-1 --filters 'Name=tag:Name,Values=Task-Manager-K3s-Node' 'Name=instance-state-name,Values=running' --query 'Reservations[*].Instances[*].PublicIpAddress' --output text",
+                        script: """
+                        aws ec2 describe-instances `
+                        --region us-east-1 `
+                        --filters "Name=tag:Name,Values=Task-Manager-K3s-Node" "Name=instance-state-name,Values=running" `
+                        --query "Reservations[*].Instances[*].PublicIpAddress" `
+                        --output text
+                        """,
                         returnStdout: true
                     ).trim()
 
-                    withCredentials([
-                        sshUserPrivateKey(
-                            credentialsId: 'aws-ssh-key',
-                            keyFileVariable: 'SSH_KEY'
-                        )
-                    ]) {
-                        bat """
-                        ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && kubectl get svc && kubectl get nodes && kubectl get pods"
-                        """
-                    }
+                    bat """
+                    "%GIT_SSH%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -i "${PEM_FILE}" ^
+                    ubuntu@${EC2_IP} ^
+                    "sudo kubectl get nodes && sudo kubectl get pods -A && sudo kubectl get svc -A"
+                    """
                 }
             }
         }
@@ -458,7 +482,11 @@ spec:
 
 ---
 
-## 5. Local Observability Configuration (`monitoring/prometheus-local.yml`)
+## 5. Observability Configurations
+
+### 5.1 Local Prometheus Scrape Configuration (`monitoring/prometheus-local.yml`)
+
+Local Prometheus is run via Docker Compose on the developer's machine on port `9091` and is configured to scrape the remote metrics endpoints directly over the internet:
 
 ```yaml
 global:
@@ -468,19 +496,65 @@ global:
 scrape_configs:
   - job_name: 'remote-ec2-node'
     static_configs:
-      - targets: ['<REMOTE-EC2-PUBLIC-IP>:9100']
+      - targets: ['44.195.19.206:9100']
 
   - job_name: 'remote-kube-state-metrics'
     static_configs:
-      - targets: ['<REMOTE-EC2-PUBLIC-IP>:30091']
+      - targets: ['44.195.19.206:30091']
 
   - job_name: 'remote-task-manager-app'
     static_configs:
-      - targets: ['<REMOTE-EC2-PUBLIC-IP>:30080']
+      - targets: ['44.195.19.206:30080']
+```
+
+### 5.2 Local Observability Compose Configuration (`monitoring/docker-compose.yml`)
+
+```yaml
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: local-prometheus
+    volumes:
+      - ./prometheus-local.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9091:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: local-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    restart: unless-stopped
 ```
 
 ---
 
-## 6. Conclusion
+## 6. Practical Windows Jenkins Deployment Challenges
 
-Separating the DevOps workflow into a one-time server bootstrap phase and a dynamic local CI/CD deployment phase maximizes deployment stability. By offloading metrics collection (Prometheus) and dashboarding (Grafana) to the local developer environment, the remote `t3.micro` EC2 instance stays lightweight and operates efficiently within free-tier resource limits. This hybrid architecture simulates a professional, production-ready DevOps infrastructure pipeline.
+Running a remote Linux-targeting pipeline from a Windows Jenkins environment presents several unique engineering challenges that were solved in this architecture:
+
+1. **Path Resolution & Command Inheritance**:
+   Windows command execution does not inherit the user-level path variable configuration in the same manner as Linux. To bypass OpenSSH path execution errors and ensure commands use the correct tools, we explicitly locate and declare variables for the Git Bash bundle binaries:
+   - `GIT_SSH = 'C:\\Program Files\\Git\\usr\\bin\\ssh.exe'`
+   - `GIT_SCP = 'C:\\Program Files\\Git\\usr\\bin\\scp.exe'`
+   Using these direct references avoids issues where Jenkins cannot resolve shell executable wrappers or uses the wrong system SSH client.
+
+2. **Private Key Permissions (`task-manager.pem`)**:
+   In Windows environments, checking out private keys or utilizing Jenkins credential wrappers often triggers key permission errors (`permissions are too open` or access denial). By storing the private key locally at a secure location (`C:\jenkins-keys\task-manager.pem`) and explicitly referencing this path, the Windows ssh/scp binary loads the key file securely and directly.
+
+3. **Multi-line Command Continuations**:
+   Windows command processor (`cmd.exe`) uses the caret symbol (`^`) as the multi-line continuation character rather than the Unix backslash (`\`). Docker commands are formatted accordingly inside triple-quoted `bat` steps to ensure correct compilation.
+
+---
+
+## 7. Conclusion
+
+Separating the DevOps workflow into a one-time server bootstrap phase and a dynamic local CI/CD deployment phase maximizes deployment stability. By offloading metrics collection (Prometheus) and dashboarding (Grafana) to the local developer environment on ports `9091` and `3000`, the remote `t3.micro` EC2 instance stays lightweight and operates efficiently within free-tier resource limits. This hybrid architecture simulates a professional, production-ready DevOps infrastructure pipeline.

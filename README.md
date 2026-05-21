@@ -8,8 +8,8 @@
 
 This repository contains the complete codebase and automation configurations for the **DevOps Task Manager** application. The project is split to ensure a clean, production-ready DevOps workflow:
 - **Phase 1 — One-Time Server Setup:** Terraform provisions an AWS EC2 instance (`t3.micro`) with Docker and an optimized k3s Kubernetes cluster auto-installed via `user_data` (`--disable traefik --disable servicelb`). Lightweight metric exporters (`node_exporter` and `kube-state-metrics`) are deployed to the instance.
-- **Phase 2 — Automated CI/CD:** A recurring, automated local Windows Jenkins pipeline builds the container, pushes it to Docker Hub, queries the EC2 IP dynamically using the AWS CLI, copies the manifests via SCP, and deploys updates remotely to the cluster via SSH.
-- **Monitoring Architecture:** To run comfortably on a low-resource `t3.micro` instance without OOM faults, the observability engine (Prometheus and Grafana) is deployed **locally** on your developer machine, scraping metrics from the remote EC2 exporters over the network.
+- **Phase 2 — Automated CI/CD:** A recurring, automated local Windows Jenkins pipeline builds the container, pushes it to Docker Hub, queries the EC2 IP dynamically using the AWS CLI, copies the manifests via SCP, and deploys updates remotely to the cluster via SSH. It uses local PEM-based SSH authentication (`C:\jenkins-keys\task-manager.pem`) and explicit Git Bash OpenSSH executable paths (`ssh.exe` and `scp.exe`) to resolve Windows environment quirks.
+- **Monitoring Architecture:** To run comfortably on a low-resource `t3.micro` instance without OOM faults, the observability engine (Prometheus and Grafana) is deployed **locally** on your developer machine. Prometheus runs on port `9091` and Grafana on port `3000`, scraping metrics from the remote EC2 exporters over the network.
 
 For detailed analysis and file specifications, read the full [PROJECT_REPORT.md](PROJECT_REPORT.md).
 
@@ -24,8 +24,8 @@ graph TD
         DH[Docker Hub]
         
         subgraph Local Observability
-            Prom[Local Prometheus]
-            Graf[Local Grafana]
+            Prom[Local Prometheus:9091]
+            Graf[Local Grafana:3000]
         end
     end
 
@@ -101,9 +101,9 @@ graph TD
 ---
 
 ### 3.2 Phase 2 — Automated CI/CD Setup Guide
-1. Set up a pipeline job in your local Jenkins server.
+1. Set up a pipeline job in your local Jenkins server on Windows.
 2. Store Docker Hub credentials as `dockerhub-creds` in Jenkins.
-3. Store the EC2 private key in Jenkins credentials as a global SSH Key named `aws-ssh-key`.
+3. Configure the local private key file at `C:\jenkins-keys\task-manager.pem`.
 4. Run the pipeline. Jenkins will build the image, push it, fetch the EC2 IP, copy the manifests, and apply them.
 
 Alternatively, you can run deployments manually using the provided helper script:
@@ -119,7 +119,7 @@ Alternatively, you can run deployments manually using the provided helper script
    ```bash
    docker compose up -d
    ```
-3. Access **Prometheus** at `http://localhost:9090` and **Grafana** at `http://localhost:3000` (credentials: `admin` / `admin123`).
+3. Access **Prometheus** at `http://localhost:9091` and **Grafana** at `http://localhost:3000` (credentials: `admin` / `admin123`).
 
 ---
 
@@ -132,5 +132,5 @@ Once all phases are complete, access your services:
 | **Task Manager App** | Remote EC2 | `http://<EC2-IP>:30080` |
 | **Node Exporter (Raw)** | Remote EC2 | `http://<EC2-IP>:9100/metrics` |
 | **Kube-State-Metrics (Raw)** | Remote EC2 | `http://<EC2-IP>:30091/metrics` |
-| **Prometheus Console** | Local Host | `http://localhost:9090` |
+| **Prometheus Console** | Local Host | `http://localhost:9091` |
 | **Grafana Dashboard** | Local Host | `http://localhost:3000` |
