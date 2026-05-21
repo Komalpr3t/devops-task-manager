@@ -80,15 +80,13 @@ pipeline {
                     echo "Deploying to EC2 IP: ${EC2_IP}"
 
                     bat """
-                    scp -o StrictModes=no -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
+                    scp -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
                     """
 
                     bat """
-                    ssh -o StrictModes=no -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
-                    "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && ^
-                    sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${IMAGE_TAG}|g' /home/ubuntu/k8s/deployment.yaml && ^
-                    kubectl apply -f /home/ubuntu/k8s/ && ^
-                    kubectl rollout status deployment/task-manager"
+                    ssh -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
+                    "sudo kubectl apply -f /home/ubuntu/k8s/ && ^
+                    sudo kubectl rollout status deployment/task-manager"
                     """
                 }
             }
@@ -111,11 +109,10 @@ pipeline {
                     ).trim()
 
                     bat """
-                    ssh -o StrictModes=no -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
-                    "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && ^
-                    kubectl get nodes && ^
-                    kubectl get pods -A && ^
-                    kubectl get svc -A"
+                    ssh -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
+                    "sudo kubectl get nodes && ^
+                    sudo kubectl get pods -A && ^
+                    sudo kubectl get svc -A"
                     """
                 }
             }
