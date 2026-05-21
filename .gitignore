@@ -12,3 +12,8 @@ dist/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Keys
+*.pem
+task-manager.pem
+
