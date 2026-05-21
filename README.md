@@ -44,8 +44,4 @@ terraform apply -auto-approve
 The recurrent deployment flow runs automatically inside your local Jenkins server on every source push. 
 
 To run manually:
-1. Make sure your private key is saved locally (`C:\jenkins-keys\task-manager.pem`).
-2. Run the deployment script:
-   ```bash
-   ./deploy.sh <optional-image-tag>
-   ```
+Trigger a manual build on the **devops-task-manager** project inside the Jenkins dashboard. Jenkins will automatically fetch the latest code, build/push the Docker image, copy the manifests, and roll out the update on the remote k3s cluster.
