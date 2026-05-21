@@ -7,6 +7,9 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
 
         PEM_FILE = 'C:\\jenkins-keys\\task-manager.pem'
+
+        GIT_SSH = 'C:\\Program Files\\Git\\usr\\bin\\ssh.exe'
+        GIT_SCP = 'C:\\Program Files\\Git\\usr\\bin\\scp.exe'
     }
 
     stages {
@@ -22,6 +25,7 @@ pipeline {
                 bat 'where aws'
                 bat 'where ssh'
                 bat 'where scp'
+                bat '"%GIT_SSH%" -V'
                 bat 'docker --version'
                 bat 'kubectl version --client'
             }
@@ -80,13 +84,18 @@ pipeline {
                     echo "Deploying to EC2 IP: ${EC2_IP}"
 
                     bat """
-                    scp -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
+                    "%GIT_SCP%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -i "${PEM_FILE}" ^
+                    -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
                     """
 
                     bat """
-                    ssh -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
-                    "sudo kubectl apply -f /home/ubuntu/k8s/ && ^
-                    sudo kubectl rollout status deployment/task-manager"
+                    "%GIT_SSH%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -i "${PEM_FILE}" ^
+                    ubuntu@${EC2_IP} ^
+                    "sudo kubectl apply -f /home/ubuntu/k8s/ && sudo kubectl rollout status deployment/task-manager"
                     """
                 }
             }
@@ -109,10 +118,11 @@ pipeline {
                     ).trim()
 
                     bat """
-                    ssh -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
-                    "sudo kubectl get nodes && ^
-                    sudo kubectl get pods -A && ^
-                    sudo kubectl get svc -A"
+                    "%GIT_SSH%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -i "${PEM_FILE}" ^
+                    ubuntu@${EC2_IP} ^
+                    "sudo kubectl get nodes && sudo kubectl get pods -A && sudo kubectl get svc -A"
                     """
                 }
             }
