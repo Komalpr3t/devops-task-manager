@@ -6,7 +6,6 @@ pipeline {
         DOCKER_IMAGE = 'komalpreet1703/task-manager'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
 
-        // UPDATED PEM LOCATION
         PEM_FILE = 'C:\\jenkins-keys\\task-manager.pem'
     }
 
@@ -81,11 +80,11 @@ pipeline {
                     echo "Deploying to EC2 IP: ${EC2_IP}"
 
                     bat """
-                    scp -i "${PEM_FILE}" -o StrictHostKeyChecking=no -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
+                    scp -o StrictModes=no -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no -r k8s ubuntu@${EC2_IP}:/home/ubuntu/
                     """
 
                     bat """
-                    ssh -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
+                    ssh -o StrictModes=no -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
                     "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && ^
                     sed -i 's|image: .*|image: ${DOCKER_IMAGE}:${IMAGE_TAG}|g' /home/ubuntu/k8s/deployment.yaml && ^
                     kubectl apply -f /home/ubuntu/k8s/ && ^
@@ -112,7 +111,7 @@ pipeline {
                     ).trim()
 
                     bat """
-                    ssh -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
+                    ssh -o StrictModes=no -o IdentitiesOnly=yes -i "${PEM_FILE}" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} ^
                     "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml && ^
                     kubectl get nodes && ^
                     kubectl get pods -A && ^
