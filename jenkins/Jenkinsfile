@@ -5,7 +5,9 @@ pipeline {
         DOCKER_HUB_CREDENTIALS_ID = 'dockerhub-creds'
         DOCKER_IMAGE = 'komalpreet1703/task-manager'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        PEM_FILE = 'C:\\Users\\91820\\OneDrive\\Desktop\\devops-task-manager\\task-manager.pem'
+
+        // UPDATED PEM LOCATION
+        PEM_FILE = 'C:\\jenkins-keys\\task-manager.pem'
     }
 
     stages {
@@ -28,6 +30,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
+
                 bat """
                 docker build ^
                 -t ${DOCKER_IMAGE}:${IMAGE_TAG} ^
