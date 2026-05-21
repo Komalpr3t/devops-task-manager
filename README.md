@@ -1,136 +1,51 @@
-# DevOps Task Manager Deployment Project
+# DevOps Task Manager
 
-**Two-Phase Architecture | Automated Remote Jenkins CI/CD | Local Prometheus & Grafana Monitoring | AWS EC2 k3s Cluster**
+This repository houses the code, infrastructure configurations, and automation resources for deploying and monitoring the **Task Manager** application. 
 
----
+The architecture is split into a **One-Time Infrastructure Setup** phase (using Terraform to launch a minimal AWS EC2 instance running `k3s` container orchestration) and a **Lightweight Recurring CI/CD Pipeline** (using a local Windows Jenkins server deploying remotely). Cluster monitoring runs locally on the developer's machine via a **hybrid observability stack** to avoid overloading the virtual server.
 
-## 1. Project Overview
-
-This repository contains the complete codebase and automation configurations for the **DevOps Task Manager** application. The project is split to ensure a clean, production-ready DevOps workflow:
-- **Phase 1 — One-Time Server Setup:** Terraform provisions an AWS EC2 instance (`t3.micro`) with Docker and an optimized k3s Kubernetes cluster auto-installed via `user_data` (`--disable traefik --disable servicelb`). Lightweight metric exporters (`node_exporter` and `kube-state-metrics`) are deployed to the instance.
-- **Phase 2 — Automated CI/CD:** A recurring, automated local Windows Jenkins pipeline builds the container, pushes it to Docker Hub, queries the EC2 IP dynamically using the AWS CLI, copies the manifests via SCP, and deploys updates remotely to the cluster via SSH. It uses local PEM-based SSH authentication (`C:\jenkins-keys\task-manager.pem`) and explicit Git Bash OpenSSH executable paths (`ssh.exe` and `scp.exe`) to resolve Windows environment quirks.
-- **Monitoring Architecture:** To run comfortably on a low-resource `t3.micro` instance without OOM faults, the observability engine (Prometheus and Grafana) is deployed **locally** on your developer machine. Prometheus runs on port `9091` and Grafana on port `3000`, scraping metrics from the remote EC2 exporters over the network.
-
-For detailed analysis and file specifications, read the full [PROJECT_REPORT.md](PROJECT_REPORT.md).
+For the comprehensive technical specification, design details, port maps, and in-depth troubleshooting logs, please refer to the main [PROJECT_REPORT.md](PROJECT_REPORT.md) or the compiled [PROJECT_REPORT.pdf](PROJECT_REPORT.pdf).
 
 ---
 
-## 2. System Architecture & Workflow
+## Repository Map
 
-```mermaid
-graph TD
-    subgraph Local/CI Environment [Local Developer Machine]
-        Jen[Jenkins Server]
-        DH[Docker Hub]
-        
-        subgraph Local Observability
-            Prom[Local Prometheus:9091]
-            Graf[Local Grafana:3000]
-        end
-    end
-
-    subgraph AWS Cloud [Infrastructure & Deployment Target]
-        AWS_API[AWS EC2 API]
-        
-        subgraph EC2 [AWS EC2 Instance: Task-Manager-K3s-Node]
-            Dock[Docker Engine]
-            K3s[k3s Cluster]
-            NodeExp[node_exporter:9100]
-            
-            subgraph Kube System
-                KSM[kube-state-metrics:30091]
-            end
-            
-            subgraph App Pods
-                TM[Task Manager Pods]
-                Svc[NodePort Service:30080]
-            end
-        end
-    end
-
-    Git[GitHub Repo] -->|Webhook Trigger| Jen
-    Jen -->|Docker Build & Push| DH
-    Jen -->|AWS CLI: Fetch EC2 IP| AWS_API
-    Jen -->|SSH / SCP manifests| EC2
-    EC2 -->|Apply specs| K3s
-    K3s --> TM
-    K3s --> Svc
-    Prom -->|Scrape Host Metrics:9100| NodeExp
-    Prom -->|Scrape Cluster State:30091| KSM
-    Prom -->|Scrape App Metrics:30080| Svc
-    Graf -->|Query| Prom
-```
+- `/app` — Frontend user interface built using Vite + React.
+- `/docker` — Contains the `Dockerfile` used by Jenkins to build the containerized Nginx-hosted production bundle.
+- `/jenkins` — Stores the `Jenkinsfile` executing local-to-remote deployment commands.
+- `/k8s` — Kubernetes manifests for deployment, application service routing, and the `kube-state-metrics` cluster agent.
+- `/monitoring` — Scrape and container-compose configurations for running Prometheus and Grafana locally.
+- `/terraform` — Declarative Infrastructure as Code (IaC) configuration files provisioning the AWS EC2 node.
 
 ---
 
-## 3. Quickstart Guides
+## Onboarding Quickstart
 
-### 3.1 Phase 1 — Server Setup Guide
-1. **Provision EC2:** Run Terraform inside `terraform/` to launch the virtual host (`t3.micro` default, Docker & k3s auto-bootstrapped).
-   ```bash
-   cd terraform
-   terraform init
-   terraform apply -auto-approve
-   ```
-2. **Install Lightweight Exporters:** SSH into the EC2 instance and execute:
-   - **Node Exporter (Host System Metrics):**
-     ```bash
-     wget https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
-     tar -xvf node_exporter-1.7.0.linux-amd64.tar.gz
-     sudo mv node_exporter-1.7.0.linux-amd64/node_exporter /usr/local/bin/
-
-     sudo tee /etc/systemd/system/node_exporter.service <<EOF
-     [Unit]
-     Description=Node Exporter
-     After=network.target
-
-     [Service]
-     User=ubuntu
-     ExecStart=/usr/local/bin/node_exporter
-
-     [Install]
-     WantedBy=multi-user.target
-     EOF
-
-     sudo systemctl daemon-reload
-     sudo systemctl enable --now node_exporter
-     ```
-   - **Kube-State-Metrics (Cluster State Metrics):**
-     The deployment manifests inside the `k8s/kube-state-metrics.yaml` file are applied automatically as part of the pipeline deployments.
-
----
-
-### 3.2 Phase 2 — Automated CI/CD Setup Guide
-1. Set up a pipeline job in your local Jenkins server on Windows.
-2. Store Docker Hub credentials as `dockerhub-creds` in Jenkins.
-3. Configure the local private key file at `C:\jenkins-keys\task-manager.pem`.
-4. Run the pipeline. Jenkins will build the image, push it, fetch the EC2 IP, copy the manifests, and apply them.
-
-Alternatively, you can run deployments manually using the provided helper script:
+### 1. Provision Infrastructure (One-Time)
+Run Terraform inside the `/terraform` folder to deploy the host machine:
 ```bash
-./deploy.sh <tag>
+cd terraform
+terraform init
+terraform apply -auto-approve
 ```
 
----
-
-### 3.3 Phase 3 — Local Observability Setup Guide
-1. Configure your remote EC2 public IP address inside `monitoring/prometheus-local.yml`.
-2. Start the local monitoring stack from the `monitoring/` directory:
+### 2. Configure Local Observatory Stack (Hybrid Monitoring)
+1. Edit the `/monitoring/prometheus-local.yml` configuration and verify that target IP addresses match your active AWS EC2 node public IP address.
+2. Spin up the containers from the `/monitoring` folder:
    ```bash
+   cd monitoring
    docker compose up -d
    ```
-3. Access **Prometheus** at `http://localhost:9091` and **Grafana** at `http://localhost:3000` (credentials: `admin` / `admin123`).
+3. View the local metrics UI:
+   - Prometheus: `http://localhost:9091`
+   - Grafana: `http://localhost:3000`
 
----
+### 3. Deploy App Updates
+The recurrent deployment flow runs automatically inside your local Jenkins server on every source push. 
 
-## 4. Port Mapping & Access URLs
-
-Once all phases are complete, access your services:
-
-| Service | Location | Access URL |
-|---------|----------|------------|
-| **Task Manager App** | Remote EC2 | `http://<EC2-IP>:30080` |
-| **Node Exporter (Raw)** | Remote EC2 | `http://<EC2-IP>:9100/metrics` |
-| **Kube-State-Metrics (Raw)** | Remote EC2 | `http://<EC2-IP>:30091/metrics` |
-| **Prometheus Console** | Local Host | `http://localhost:9091` |
-| **Grafana Dashboard** | Local Host | `http://localhost:3000` |
+To run manually:
+1. Make sure your private key is saved locally (`C:\jenkins-keys\task-manager.pem`).
+2. Run the deployment script:
+   ```bash
+   ./deploy.sh <optional-image-tag>
+   ```

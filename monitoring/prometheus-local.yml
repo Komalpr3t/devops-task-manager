@@ -11,6 +11,3 @@ scrape_configs:
     static_configs:
       - targets: ['44.195.19.206:30091']
 
-  - job_name: 'remote-task-manager-app'
-    static_configs:
-      - targets: ['44.195.19.206:30080']
